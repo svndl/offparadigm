@@ -251,7 +251,6 @@ end
         
         % size validation
         ValidateProbeSize;
-        ValidateBackgroundSize;
         isSwept = ~strcmp(PVal('S', 'Sweep Type'), 'Fixed');
         if (isSwept)
             % sweep range validation
@@ -260,7 +259,7 @@ end
             ValidatePedestalSize;
             ValidateProbeLum;
         end
-        
+        ValidateBackgroundSize;
         %luminance validation
         ValidateBackgroundLum;
         ValidatePedestalLum;
@@ -331,10 +330,10 @@ end
         % limit the number of square elements 
         function ValidateBackgroundSize            
             %square size should be at least 2 pixel + probe + base            
-            minSquareSize = probeSizePix + pedestalSizePix + 2;
+            minSquareSize = probeSizePix + pedestalSizePix + 5;
             
             if (squareSizePix < minSquareSize)
-                nSquares_new = round(width_pix/minSquareSize);
+                nSquares_new = floor(width_pix/minSquareSize);
                 CorrectParam('B','Squares per row', nSquares_new);
                 AppendVMs(sprintf(...
                     'Square size is too small, corrected to nearest possible value: %d ',...
@@ -370,8 +369,8 @@ end
                         AppendVMs(sprintf( ...
                             'Sweep start is too small, corrected to nearest possible value: %3.4f', minSweep));
                     end
-                    if (maxPedestalSizePix > squareSizePix)
-                        maxPedestalSizePix = .9*squareSizePix;
+                    if (2*maxPedestalSizePix > squareSizePix)
+                        maxPedestalSizePix = round(.9*squareSizePix/2);
                         
                         maxSweep = maxPedestalSizePix*pix2arcmin;
                         CorrectParam('S','Sweep End', maxSweep);
@@ -399,11 +398,10 @@ end
     function MakeMovie
         % ---- GRAB & SET PARAMETERS ----
         [ parameters, timing, videoMode, trialNumber ] = deal( varargin{2:5} );
-        save('pmf_RandomDotsStereoMotion_MakeMovie.mat', 'parameters', 'timing', 'videoMode');
+        save('pmf_Westheimer_MakeMovie.mat', 'parameters', 'timing', 'videoMode');
         TRVal = @(x) timing{ ismember( timing(:,1), {x} ), 2 };
         VMVal = @(x) videoMode{ ismember( videoMode(:,1), {x} ), 2 };
         
-        save('videoModeXDiva.mat', 'videoMode');
         needsUnique = definitions{end}{3,2};
         needsImFiles = true;
         preludeType = {'Dynamic', 'Blank', 'Static'};
@@ -449,9 +447,10 @@ end
         stimset.probeLuminance = GetParamArray('1', 'Contrast (pct)');
         stimset.probePolarity =  GetParamArray('1', 'Probe Polarity');      
         
-        save('WestheimerOutput.mat', 'stimset', 'video', 'stimsetTiming');
+        save('WestheimerInput.mat', 'stimset', 'video', 'stimsetTiming');
         
         [rImSeq, rIms] = westheimer(stimset, video, stimsetTiming);
+        save('WestheimerOutput.mat', 'rImSeq', 'rIms');
                 
         isSuccess = true;
         output = { isSuccess, rIms, cast( rImSeq, 'int32') }; % "Images" (single) and "Image Sequence" (Int32)
@@ -480,8 +479,8 @@ end
         %         case 'negative'
         %             stimset.probeContrastSign = -1;
         %     end
-        stimset.maxLuminance = round(video.maxLuminanceCd*video.meanLuminanceBitmap/video.meanLuminanceCd);
-        
+        %stimset.maxLuminance = round(video.maxLuminanceCd*video.meanLuminanceBitmap/video.meanLuminanceCd);
+        stimset.maxLuminance = 255;
         stimset.baseElemSizePx = round(video.minDim/stimset.nBaseElems);
         stimset.probeSizePix = round(stimset.probeSizeAmin/video.pix2arcmin);
         stimset.pedestalSizePix = round(stimset.pedestalSizeAmin/video.pix2arcmin);
@@ -500,12 +499,20 @@ end
         %% make imageSequence
         imSeq = [];
         updateEveryFrame = timing.nFramesPerStep;
-        totalRepeats = timing.framesPerBin/updateEveryFrame;
+        totalRepeats = timing.framesPerStep/updateEveryFrame;
         for s = 1:timing.nCoreSteps
             activeFrames = (1 + timing.nFramesPerStep*(s - 1):s*timing.nFramesPerStep)';
             imSeq = cat(1, imSeq, repmat(activeFrames, [totalRepeats 1]));
         end
-        imSeq = uint32(imSeq);
+		preludeSeq = [];
+		postludeSeq = [];
+		if (timing.nPreludeBins)
+			% repeat first step and last step
+			preludeSeq = imSeq(1:timing.nPreludeFrames);
+			postludeSeq = imSeq(end - timing.nPreludeFrames + 1:end);
+		end
+		
+        imSeq = [preludeSeq; uint32(imSeq); postludeSeq];
     end
 
     function frames = mkSweepFrames(stimset, timing, video, nStep)
@@ -515,14 +522,14 @@ end
                 % pedestal grows, probe flickers
                 pedestalSizePx = getModProfile(stimset.pedestalSizePix(nStep), ...
                     stimset.pedestalSizePix(nStep), timing.nFramesPerStep, stimset.modType);
-                probeLum = getModProfile(stimset.pedestalLuminance, stimset.probeLuminanceMax(nStep), ...
+                probeLum = getModProfile(stimset.probeLuminanceMax(nStep), stimset.pedestalLuminance, ...
                     timing.nFramesPerStep, stimset.modType);
             case 'Probe Contrast'
-                probeLum = getModProfile(stimset.pedestalLuminance, stimset.probeLuminanceMax(nStep), ...
+                probeLum = getModProfile(stimset.probeLuminanceMax(nStep), stimset.pedestalLuminance, ...
                     timing.nFramesPerStep, stimset.modType);
                 pedestalSizePx = stimset.pedestalSizePix(nStep)*ones(1, timing.nFramesPerStep);
             case 'Fixed'
-                probeLum = getModProfile(stimset.pedestalLuminance, stimset.probeLuminanceMax(nStep), ...
+                probeLum = getModProfile(stimset.probeLuminanceMax(nStep), stimset.pedestalLuminance, ...
                     timing.nFramesPerStep, stimset.modType);
                 pedestalSizePx = stimset.pedestalSizePix(nStep)*ones(1, timing.nFramesPerStep);
                 
@@ -575,26 +582,26 @@ end
         % first q
         
         template_q1 = baseLum*ones(base_first_half, base_first_half);
-        template_q1(1:pedestal_first_half + probe_first_half, 1:pedestal_first_half + probe_first_half) = pedestalLum;
+        template_q1(1:pedestal_first_half, 1:pedestal_first_half) = pedestalLum;
         template_q1(1:probe_first_half, 1:probe_first_half) = probeLum;
         
         % second q
         template_q2 = baseLum*ones(base_first_half, base_second_half);
-        template_q2(1:pedestal_first_half + probe_first_half, 1:pedestal_second_half + probe_second_half) = pedestalLum;
+        template_q2(1:pedestal_first_half, 1:pedestal_second_half) = pedestalLum;
         if (probe_second_half)
             template_q2(1:probe_first_half, 1:probe_second_half) = probeLum;
         end
         
         % third q
         template_q3 = baseLum*ones(base_second_half, base_first_half);
-        template_q3(1:pedestal_second_half + probe_second_half, 1:pedestal_first_half+probe_first_half) = pedestalLum;
+        template_q3(1:pedestal_second_half, 1:pedestal_first_half) = pedestalLum;
         
         if (probe_second_half)
             template_q3(1:probe_second_half, 1:probe_first_half) = probeLum;
         end
         % q4
         template_q4 = baseLum*ones(base_second_half, base_second_half);
-        template_q4(1:pedestal_second_half + probe_second_half, 1:pedestal_second_half + probe_second_half) = pedestalLum;
+        template_q4(1:pedestal_second_half, 1:pedestal_second_half) = pedestalLum;
         
         if (probe_second_half)
             template_q4(1:probe_second_half, 1:probe_second_half) = probeLum;
