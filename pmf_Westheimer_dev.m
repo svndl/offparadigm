@@ -1,4 +1,4 @@
-function pmf_Westheimer( varargin )
+function pmf_Westheimer_dev( varargin )
 %
 %   Shows a correlated figure region which potentially modulates in depth
 %   over a background whose correlation level can be any value from 0-1.
@@ -146,7 +146,7 @@ end
         % "Base" part parameters - paradigm specific parameters that apply to unmodulated parts of the stimulus
         {
         'ModInfo'                   0.0       'integer' {}
-        'Squares per row'	        10.0      'integer'	{}
+        'Squares mFactor'	        1.0       'integer'	{}
         'Bgr lum (% max)'           10        'integer' {} 
         'Pedestal lum (% max)'      50        'integer' {} 
         'Pedestal Size (amin)'      5.0       'double'  {}        
@@ -158,8 +158,9 @@ end
         'Cycle Frames'           2.0         'integer'	{}  % framerate(Hz)/stimFreq(Hz) Modulation frequency every other frame (2 Hz)
         'Contrast (pct)'	     20.0        'double'	{}
         'Probe Polarity'         'positive'  'nominal'  {'positive', 'negative'}
-        'Probe size (amin)'      5.0         'double'   {}         
-        }
+        'Probe size (amin)'      5.0         'double'   {}
+        'GH Sector'              'All'       'nominal'  {'All', 'temporal', 'nasal', 'infero-temporal', 'infero-nasal', 'supero-temporal', 'supero-nasal'}        
+         }
         
         
         % Sweepable parameters
@@ -195,7 +196,6 @@ end
          'Sawtooth-off'     'ModInfo'          0.0         
          'Square'           'ModInfo'          0.0
          }
-        % check direction
         % Required by xDiva, but not by Matlab Function
         {
         'Version'					1
@@ -243,8 +243,9 @@ end
         probeSizeAmin = PVal('1', 'Probe size (amin)');
         probeSizePix = probeSizeAmin/pix2arcmin;
         pedestalSizeAmin = PVal('B', 'Pedestal Size (amin)');
-        pedestalSizePix = pedestalSizeAmin/pix2arcmin;        
-        nSquares = PVal('B','Squares per row');
+        pedestalSizePix = pedestalSizeAmin/pix2arcmin;
+        maxSquares = 9;
+        nSquares = maxSquares*PVal('B', 'Squares mFactor');
         squareSizePix = round(width_pix/nSquares);
           
         validationMessages = {};
@@ -255,7 +256,7 @@ end
         isSwept = ~strcmp(PVal('S', 'Sweep Type'), 'Fixed');
         if (isSwept)
             % sweep range validation
-            ValidateSweepRange;
+            ValidateSweepParameters;
         else
             ValidatePedestalSize;
             ValidateProbeLum;
@@ -354,15 +355,23 @@ end
         end
         
         % valid sweep range 
-        function ValidateSweepRange()
+        function ValidateSweepParameters
             sweepType = PVal('S','Sweep Type');
             minSweep = PVal('S', 'Sweep Start');
             maxSweep = PVal('S', 'Sweep End');
                                     
             switch (sweepType)
                 case 'Pedestal Size'
+                    % checking the range and flicker quadrant
                     minPedestalSizePix = minSweep/pix2arcmin;
                     maxPedestalSizePix = maxSweep/pix2arcmin;
+                    
+%                     flickerQ = PVal('1', 'Flicker Quadrant');
+%                     if (~strcmp(flickerQ, 'All'))
+%                         CorrectParam('1', 'Flicker Quadrant', 'All');
+%                         AppendVMs(sprintf( ...
+%                             'During pedestal sweep %s quadrants will flicker', 'All'));
+%                     end
                     if (minPedestalSizePix < 1)
                         minPedestalSizePix = 1;
                         minSweep = minPedestalSizePix*pix2arcmin;
@@ -438,7 +447,7 @@ end
         stimset.sweepType = PVal('S','Sweep Type');
         stimset.isSwept = ~strcmp(stimset.sweepType,'Fixed');  
         stimset.modType = PVal('S', 'Modulation');
-        stimset.nBaseElems = PVal('B', 'Squares per row');
+        stimset.nBaseElems = PVal('B', 'Squares mFactor');
         stimset.bgrLum = PVal('B', 'Bgr lum (% max)' );
         
         stimset.pedestalLum = PVal('B', 'Pedestal lum (% max)');
@@ -446,11 +455,12 @@ end
         
         stimset.probeSizeAmin = PVal('1', 'Probe size (amin)');
         stimset.probeLuminance = GetParamArray('1', 'Contrast (pct)');
-        stimset.probePolarity =  GetParamArray('1', 'Probe Polarity');      
+        stimset.probePolarity =  GetParamArray('1', 'Probe Polarity');
+        stimset.flickerQuadrant = PVal('1', 'GH Sector');
         
         save('WestheimerInput.mat', 'stimset', 'video', 'stimsetTiming');
         
-        [rImSeq, rIms] = westheimer(stimset, video, stimsetTiming);
+        [rImSeq, rIms] = westheimer_garway_heath(stimset, video, stimsetTiming);
         save('WestheimerOutput.mat', 'rImSeq', 'rIms');
                 
         isSuccess = true;
@@ -459,7 +469,7 @@ end
         assignin( 'base', 'output', output )
     end
     %%%%%%%%% STIMULUS GENERATION PART %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    function [imSeq, images] = westheimer(stimset, video, timing)
+    function [imSeq, images] = westheimer_garway_heath(stimset, video, timing)
         
         %% create base element
         % each matrix is of the same size
@@ -473,28 +483,24 @@ end
         timing.nFramesPerStep = nUniqueFramesPerStep(stimset, timing);
         timing.nUniqueFrames = timing.nCoreSteps*timing.nFramesPerStep;
         
-        %% recalculate base parameters (size, luminance)
-        %     switch stimset.probePolarity
-        %         case 'positive'
-        %             stimset.probeContrastSign = 1;
-        %         case 'negative'
-        %             stimset.probeContrastSign = -1;
-        %     end
-        %stimset.maxLuminance = round(video.maxLuminanceCd*video.meanLuminanceBitmap/video.meanLuminanceCd);
         stimset.maxLuminance = 255;
-        stimset.baseElemSizePx = round(video.minDim/stimset.nBaseElems);
+        % garway-heath max elements
+        stimset.maxNElem = 9;
+        
+        stimset.baseElemSizePx = round(video.minDim/(stimset.nBaseElems*stimset.maxNElem));
         stimset.probeSizePix = round(stimset.probeSizeAmin/video.pix2arcmin);
         stimset.pedestalSizePix = round(stimset.pedestalSizeAmin/video.pix2arcmin);
         stimset.pedestalLuminance = round(stimset.maxLuminance*stimset.pedestalLum/100);
         stimset.backgroundLuminance = round(stimset.maxLuminance*stimset.bgrLum/100);
         stimset.probeLuminanceMax = round(stimset.pedestalLuminance*(1 + stimset.probeLuminance/100));
         
-        frames = zeros( video.minDim,  video.minDim, 1, timing.nUniqueFrames);
-        for s = 1:timing.nCoreSteps
-            frames(:, :, 1, (s - 1)*timing.nFramesPerStep +1:s*timing.nFramesPerStep) = mkSweepFrames(stimset, timing, video, s);
-        end
+        frames = mkTrialSequence(stimset, timing);
         
-        %% add ciolor dim
+%         for s = 1:timing.nCoreSteps
+%             frames(:, :, 1, (s - 1)*timing.nFramesPerStep +1:s*timing.nFramesPerStep) = 
+%         end
+       
+        %% add color dim
         images = uint8(frames);
         
         %% make imageSequence
@@ -515,36 +521,106 @@ end
 		
         imSeq = [preludeSeq; uint32(imSeq); postludeSeq];
     end
-
-    function frames = mkSweepFrames(stimset, timing, video, nStep)
-        % get sweep profile
-        switch stimset.sweepType
-            case 'Pedestal Size'
-                % pedestal grows, probe flickers
-                pedestalSizePx = getModProfile(stimset.pedestalSizePix(nStep), ...
-                    stimset.pedestalSizePix(nStep), timing.nFramesPerStep, stimset.modType);
-                probeLum = getModProfile(stimset.pedestalLuminance, stimset.probeLuminanceMax(nStep), ...
-                    timing.nFramesPerStep, stimset.modType);
-            case 'Probe Contrast'
-                probeLum = getModProfile(stimset.pedestalLuminance, stimset.probeLuminanceMax(nStep), ...
-                    timing.nFramesPerStep, stimset.modType);
-                pedestalSizePx = stimset.pedestalSizePix(nStep)*ones(1, timing.nFramesPerStep);
-            case 'Fixed'
-                probeLum = getModProfile(stimset.pedestalLuminance, stimset.probeLuminanceMax(nStep), ...
-                    timing.nFramesPerStep, stimset.modType);
-                pedestalSizePx = stimset.pedestalSizePix(nStep)*ones(1, timing.nFramesPerStep);
-                
+    
+    %% Garway-Heath sector map 
+    function sectorMap = garway_heath(sector, mFactor)
+    
+        nRows = 8;
+        nCols = 9;
+        sectorMap = zeros(nRows, nCols);
+        % no squares
+        sectorMap([1 8], 1:3) = -1;
+        sectorMap([2 7], 1:2) = -1;
+        sectorMap([3 6], 1) = -1;
+        
+        sectorMap([1 8], 8:9) = -1;
+        sectorMap([2 7], 9) = -1;
+    
+        switch sector
+            case 'temporal'
+                sectorMap(4:5, 5:7) = 1;
+            case 'nasal'
+                sectorMap(3:6,9) = 1;
+            case 'infero-temporal'
+                sectorMap(2, 4:6) = 1;
+                sectorMap(3, 2:7) = 1;
+                sectorMap(4, 1:4) = 1;                
+            case 'infero-nasal'
+                sectorMap(1, 4:7) = 1;
+                sectorMap(2, [3, 7]) = 1;
+                sectorMap(3, 8) = 1;
+            case 'supero-temporal'
+                sectorMap(5, 2:4) = 1;
+                sectorMap(6, 3:7) = 1;
+                sectorMap(7, 5:6) = 1;
+            case 'supero-nasal'
+                sectorMap(6, [2, 8]) = 1;
+                sectorMap(7, [3,4,7,8]) = 1;
+                sectorMap(8, 4:7) = 1;
+            case 'All'
+                sectorMap(sectorMap >= 0) = 1;
         end
         
-        frames = zeros(video.minDim, video.minDim, timing.nFramesPerStep);
-        for nf = 1:timing.nFramesPerStep
-            baseElem = makeSquareElement(stimset.baseElemSizePx, stimset.backgroundLuminance, ...
-                pedestalSizePx(nf), stimset.pedestalLuminance, ...
-                stimset.probeSizePix, probeLum(nf));
-            frames(:, :, nf) = repmat(baseElem, stimset.nBaseElems);
-        end
-        
+        sectorMap = my_repelem(sectorMap, mFactor, mFactor);
     end
+    
+    %% Sweep frames
+    
+    
+    function frames = mkTrialSequence(stimset, timing)
+        
+        %% get a sector map
+        sectorMap = garway_heath(stimset.flickerQuadrant, stimset.nBaseElems);
+        
+        nSquaresPerRow = size(sectorMap, 1);
+        nSquaresPerCol = size(sectorMap, 2);
+        
+        % 0 -- no square (background)
+        emptySquareMap = uint8(sectorMap == -1);
+        emptySquareMask = my_repelem(emptySquareMap, stimset.baseElemSizePx, stimset.baseElemSizePx, timing.nUniqueFrames);
+        
+        % -1 -- static square
+        staticSquareMap = uint8(sectorMap == 0);
+        staticSquareMask = my_repelem(staticSquareMap, stimset.baseElemSizePx, stimset.baseElemSizePx, timing.nUniqueFrames);
+
+        % 1 -- active square
+        flickerSquareMap = uint8(sectorMap == 1);
+        flickerSquareMask = my_repelem(flickerSquareMap, stimset.baseElemSizePx, stimset.baseElemSizePx, timing.nUniqueFrames);
+        
+        % pedestal size for the whole sweep
+        sweepPedestalSz = my_repelem(stimset.pedestalSizePix, timing.nFramesPerStep);
+        pedestalLum = my_repelem(stimset.pedestalLuminance, timing.nFramesPerStep*timing.nCoreSteps)';
+        
+        % sweep mod profile for probe
+        probeLum = my_repelem(stimset.probeLuminanceMax, timing.nFramesPerStep);
+        modProfile = getModProfile(0, 1, timing.nFramesPerStep, stimset.modType)';
+        sweepModProfile = repmat(modProfile, [timing.nCoreSteps 1]);     
+        sweepProbeLum =  pedestalLum + sweepModProfile.*(probeLum - pedestalLum);
+        
+ 
+        staticSquareSequence = zeros(stimset.baseElemSizePx, stimset.baseElemSizePx, timing.nCoreSteps);
+        for ns = 1:timing.nCoreSteps
+            staticSquareSequence(:, :, ns) = makeSquareElement(stimset.baseElemSizePx, stimset.backgroundLuminance, ...
+                sweepPedestalSz(ns), stimset.pedestalLuminance, ...
+                stimset.probeSizePix, stimset.pedestalLuminance);
+        end
+        
+        sweepSquareSequence = zeros(stimset.baseElemSizePx, stimset.baseElemSizePx, timing.nUniqueFrames);
+        for nf = 1:timing.nUniqueFrames            
+            sweepSquareSequence(:, :, nf) = makeSquareElement(stimset.baseElemSizePx, stimset.backgroundLuminance, ...
+                sweepPedestalSz(nf), stimset.pedestalLuminance, ...
+                stimset.probeSizePix, sweepProbeLum(nf));
+        end
+        
+        % apply masks
+        emptySquareFrames = emptySquareMask.*uint8(stimset.backgroundLuminance*ones(size(emptySquareMask)));
+        staticSquareFrames = staticSquareMask.*uint8(repmat(staticSquareSequence, [nSquaresPerRow nSquaresPerCol timing.updateFramesPerCycle]));
+        sweepSquareFrames = flickerSquareMask.*uint8(repmat(sweepSquareSequence, [nSquaresPerRow nSquaresPerCol 1]));
+        
+        
+        frames(:, :, 1, :) = emptySquareFrames + staticSquareFrames + sweepSquareFrames;
+    end
+    
 
     function nf = nUniqueFramesPerStep(stimset, timing)
         switch(stimset.modType)
@@ -612,3 +688,5 @@ end
         template = [template_q1(end:-1:1, end:-1:1), template_q2(end:-1:1, :); template_q3(:, end:-1:1), template_q4];
     end
 end
+
+ 
