@@ -1,0 +1,43 @@
+function projectRC(eegCND, W, A, nComp, titles, timeCourseLen, dirResFigures)
+    %project on conditions
+    cl = {'b', 'r'};
+    
+    timeCourse = linspace(0, timeCourseLen, size(eegCND{1, 1}, 1));
+    how.splitBy = titles;
+    close all;
+    nCnd = 2;
+    h = cell(nCnd, 1);
+    FontSize = 25;
+    
+    %% run the projections, plot the topography
+      for c = 1:nComp
+         
+         subplot(nComp, 2, 2*c - 1);
+         xlabel('Time, ms') % x-axis label
+         ylabel('Amplitude, V') % y-axis label
+         h_xlabel = get(gca,'XLabel');
+         set(h_xlabel,'FontSize', FontSize); 
+         h_ylabel = get(gca,'YLabel');
+         set(h_ylabel,'FontSize', FontSize);
+         
+         color_idx = 1;        
+         for cn = 1:nCnd  
+             [muData_C, semData_C] = rcaProjectmyData(eegCND(:, cn), W);
+             hs = shadedErrorBar(timeCourse, muData_C(:, c), semData_C(:, c), cl{color_idx}); hold on
+             h{cn} = hs.patch;
+             color_idx = color_idx + 1;
+         end
+         legend([h{1:end}], [how.splitBy]'); hold on;
+         title(['RC' num2str(c) ' time course']);
+         subplot(nComp, 2, 2*c);         
+         
+         plotOnEgi(A(:,c)); hold on;
+      end
+     
+     if (~exist(dirResFigures, 'dir'))
+         mkdir(dirResFigures)
+     end
+     set(findobj(gcf,'Type','text'), 'FontSize', FontSize);
+     saveas(gcf, fullfile(dirResFigures, strcat('rcaProject_', how.splitBy{:})), 'fig');
+     close(gcf);     
+end 
